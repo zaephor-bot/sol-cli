@@ -1,5 +1,7 @@
 // Package cli implements the sol command line: flag parsing, zone
-// resolution, and output formatting for the day's solar schedule.
+// resolution, and output formatting for the day's solar schedule. Every
+// event time is computed by github.com/zaephor-bot/sol-lib via
+// internal/schedule; this package holds no solar math.
 package cli
 
 import (
@@ -11,29 +13,35 @@ import (
 	"time"
 
 	"github.com/zaephor-bot/sol-cli/internal/render"
-	"github.com/zaephor-bot/sol-cli/internal/solar"
+	"github.com/zaephor-bot/sol-cli/internal/schedule"
 	"github.com/zaephor-bot/sol-cli/internal/tz"
 )
 
-const usage = `sol prints the day's solar schedule (sunrise, solar noon, sunset) for a location.
+const usage = `sol prints the day's solar schedule for a location: sunrise, solar
+noon, sunset, golden hour, and blue hour, with golden hour and blue hour
+each appearing as a dawn and a dusk window.
 
 Usage:
 
-  sol -lat 33.6 -lon -117.8 [--date 2026-03-08] [--tz America/Los_Angeles] [--json]
+  sol -lat 33.6 -lon -117.8 [-date 2026-03-08] [--tz America/Los_Angeles] [--json]
 
 Flags:
 
   -lat     latitude in decimal degrees, north positive (required)
   -lon     longitude in decimal degrees, east positive (required)
-  -date    calendar date, YYYY-MM-DD (default: today in the resolved zone)
+  -date    calendar date, YYYY-MM-DD, a real date (default: today in the
+           resolved zone)
   -tz      IANA time zone name, e.g. America/Los_Angeles
            (default: $TZ, then UTC; an empty value counts as unset)
   -json    emit JSON; every timestamp carries its UTC offset
 
-Times are printed in the resolved zone and every time carries its numeric
-UTC offset, so a day spanning a daylight-saving transition shows both
-offsets. An unresolvable zone name in -tz or $TZ is an error, not a silent
-fallback to UTC.
+Every event time comes from the shared library github.com/zaephor-bot/
+sol-lib. Times are printed in the resolved zone and every time carries
+its numeric UTC offset, so a day spanning a daylight-saving transition
+shows both offsets. An event that never happens on the requested day (a
+polar day or polar night) prints as a "none" row naming it. An
+unresolvable zone name in -tz or $TZ is an error, not a silent fallback
+to UTC.
 `
 
 // Exit codes: 2 for usage errors, 1 for a value that fails to resolve.
@@ -84,11 +92,11 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 	parsed, err := time.Parse("2006-01-02", date)
 	if err != nil {
-		fmt.Fprintf(stderr, "sol: invalid -date value %q: expected YYYY-MM-DD\n", date)
+		fmt.Fprintf(stderr, "sol: invalid -date value %q: must be a real calendar date formatted YYYY-MM-DD\n", date)
 		return exitUsage
 	}
 
-	day := solar.Schedule(parsed.Year(), parsed.Month(), parsed.Day(), *lat, *lon)
+	day := schedule.For(parsed.Year(), parsed.Month(), parsed.Day(), loc, *lat, *lon)
 
 	if *jsonFlag {
 		if err := render.JSON(stdout, loc, zoneName, date, *lat, *lon, day); err != nil {
@@ -102,8 +110,16 @@ func Run(args []string, stdout, stderr io.Writer) int {
 }
 
 func validateCoords(lat, lon float64, stderr io.Writer) int {
-	if math.IsNaN(lat) || math.IsNaN(lon) {
+	missingLat, missingLon := math.IsNaN(lat), math.IsNaN(lon)
+	switch {
+	case missingLat && missingLon:
 		fmt.Fprintf(stderr, "sol: both -lat and -lon are required\n\n%s", usage)
+		return exitUsage
+	case missingLat:
+		fmt.Fprintf(stderr, "sol: -lat is required\n\n%s", usage)
+		return exitUsage
+	case missingLon:
+		fmt.Fprintf(stderr, "sol: -lon is required\n\n%s", usage)
 		return exitUsage
 	}
 	if lat < -90 || lat > 90 {
