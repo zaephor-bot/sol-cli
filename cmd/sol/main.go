@@ -1,6 +1,6 @@
 // Command sol prints the day's solar schedule (sunrise, solar noon,
-// sunset) for a location, with every time shown in the requested time
-// zone and labeled with its UTC offset.
+// sunset, golden hour, blue hour) for a location, with every time shown
+// in the requested time zone and labeled with its UTC offset.
 package main
 
 import (
